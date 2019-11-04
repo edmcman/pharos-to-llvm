@@ -14,7 +14,9 @@ import_functions = {}
 
 module = ir.Module(name="test")
 
-abort = ir.Function (module, ir.FunctionType (ir.VoidType (), []), "abort")
+importfunctype = ir.FunctionType (ir.IntType (64), [])
+voidfunctype = ir.FunctionType (ir.VoidType (), [])
+abort = ir.Function (module, voidfunctype, "abort")
 
 # Hack
 M = ir.GlobalVariable (module, ir.PointerType (ir.IntType (8)), "M")
@@ -35,18 +37,29 @@ reduction = ['xor', 'add']
 
 def convert_file (file, module):
     # Declare stuff
-    for func in file.items ():
+
+    # It is safe to not pass an irb because rax will always be a
+    # global variable which won't use the builder
+    rax = convert_var_noload (file['special_regs'] ['rax'])
+
+    for func in file['functions'].items ():
         add_func (func, module)
 
-    for func in file.items ():
-        convert_func (func, module)
+    for func in file['functions'].items ():
+        convert_func (func, module, rax)
+
+    entry = ir.Function (module, voidfunctype, "main")
+    init = ir.Function (module, voidfunctype, "initialize_stuff")
+    block = entry.append_basic_block("entry")
+    irb = ir.IRBuilder (block)
+    irb.call (init, [])
+    irb.call (functions [int (file['sourcefunc'])], [])
+    irb.ret_void ()
 
 def get_import_func (file, func):
     tuple = (file, func)
     if tuple not in import_functions:
-        void = ir.VoidType ()
-        fnty = ir.FunctionType (void, [])
-        func = ir.Function (module, fnty, name="%s!%s" % (file, func))
+        func = ir.Function (module, importfunctype, name="%s!%s" % (file, func))
         import_functions [tuple] = func
 
     return import_functions [tuple]
@@ -73,7 +86,7 @@ def add_func (func, module):
             irb = ir.IRBuilder (entry)
             irb.branch (vertices [addr] [v['id']])
 
-def convert_func (func, module):
+def convert_func (func, module, rax):
     #print (len(func))
     #print (func)
 
@@ -85,7 +98,7 @@ def convert_func (func, module):
 
     for v in body['vertices']:
         #print (v)
-        convert_vertex (v, addr, body, llvmfunc)
+        convert_vertex (v, addr, body, llvmfunc, rax)
 
     return func
 
@@ -97,11 +110,11 @@ def add_vertexid (v, funcaddr, llvmfunc):
     vertices[funcaddr][v['id']] = block
     return block
 
-def convert_vertex (v, funcaddr, body, llvmfunc):
+def convert_vertex (v, funcaddr, body, llvmfunc, rax):
     block = vertices [funcaddr] [v['id']]
     irb = ir.IRBuilder (block)
 
-    convert_stmts (v['stmts'], irb)
+    convert_stmts (v['stmts'], rax, irb)
 
     if not irb.block.is_terminated:
 
@@ -123,11 +136,11 @@ def convert_vertex (v, funcaddr, body, llvmfunc):
 
     return block
 
-def convert_stmts(stmts, irb=ir.IRBuilder ()):
+def convert_stmts(stmts, rax, irb=ir.IRBuilder ()):
     for stmt in stmts:
-        convert_stmt (stmt, irb)
+        convert_stmt (stmt, rax, irb)
 
-def convert_stmt(stmt, irb=ir.IRBuilder ()):
+def convert_stmt(stmt, rax, irb=ir.IRBuilder ()):
     #print (stmt)
 
     if stmt['op'] == "InsnStmt":
@@ -147,7 +160,8 @@ def convert_stmt(stmt, irb=ir.IRBuilder ()):
     elif stmt['op'] == "CallStmt":
         if stmt['calltype'] == "import":
             targetfunc = get_import_func (stmt ['file'], stmt ['func'])
-            return irb.call (targetfunc, [])
+            out = irb.call (targetfunc, [])
+            return irb.store (out, rax)
         elif stmt['exp'] ['op'] == "constant":
             targetaddr = int (stmt['exp'] ['const'], 16)
             targetfunc = functions [targetaddr]
@@ -170,8 +184,14 @@ def convert_var_noload (exp, irb=ir.IRBuilder ()):
             typ = ir.PointerType (ir.IntType (8))
         else:
             typ = ir.IntType (int(exp['width']))
-        varname = exp['varname'] if exp['varname'] != "" else "v%d" % int(exp['varid'])
-        vars[exp['varid']] = ir.GlobalVariable(module, typ, varname)
+
+        # Use an alloca for temporaries
+        if exp['varname'] == "":
+            varname = "v%d" % int(exp['varid'])
+            vars[exp['varid']] = irb.alloca (typ, name=varname)
+        else:
+            varname = exp['varname']
+            vars[exp['varid']] = ir.GlobalVariable(module, typ, varname)
 
     return vars[exp['varid']]
 
