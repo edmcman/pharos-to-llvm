@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 
 from functools import reduce
-from llvmlite import ir
+from llvmlite import ir, binding
 import sys
 import json
 
@@ -10,6 +10,7 @@ import json
 vars = {}
 vertices = {}
 functions = {}
+import_functions = {}
 
 module = ir.Module(name="test")
 
@@ -40,6 +41,16 @@ def convert_file (file, module):
     for func in file.items ():
         convert_func (func, module)
 
+def get_import_func (file, func):
+    tuple = (file, func)
+    if tuple not in import_functions:
+        void = ir.VoidType ()
+        fnty = ir.FunctionType (void, [])
+        func = ir.Function (module, fnty, name="%s!%s" % (file, func))
+        import_functions [tuple] = func
+
+    return import_functions [tuple]
+
 def add_func (func, module):
     addr = int (func[0])
     body = func[1]
@@ -48,12 +59,19 @@ def add_func (func, module):
     void = ir.VoidType()
     fnty = ir.FunctionType(void, [])
     func = ir.Function(module, fnty, name=str("0x%x" % addr))
+    entry = func.append_basic_block (name='entry')
     functions[addr] = func
+    first = True
 
     # Add starting blocks for each vertex
     for v in body['vertices']:
         add_vertexid (v, addr, func)
 
+        # Add a branch to the first BB
+        if first:
+            first = False
+            irb = ir.IRBuilder (entry)
+            irb.branch (vertices [addr] [v['id']])
 
 def convert_func (func, module):
     #print (len(func))
@@ -127,7 +145,10 @@ def convert_stmt(stmt, irb=ir.IRBuilder ()):
                             val.type.as_pointer ())
         return irb.store (val, ptr)
     elif stmt['op'] == "CallStmt":
-        if stmt['exp'] ['op'] == "constant":
+        if stmt['calltype'] == "import":
+            targetfunc = get_import_func (stmt ['file'], stmt ['func'])
+            return irb.call (targetfunc, [])
+        elif stmt['exp'] ['op'] == "constant":
             targetaddr = int (stmt['exp'] ['const'], 16)
             targetfunc = functions [targetaddr]
             return irb.call (targetfunc, [])
@@ -199,7 +220,7 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
         return bigexp
     elif exp['op'] == "uextend":
         typ = ir.IntType (int (exp['width']))
-        exp = convert_exp (exp['children'][0], irb)
+        exp = convert_exp (exp['children'][1], irb)
         return irb.zext (exp, typ)
     elif exp['op'] == "zerop":
         assert (len(exp['children']) == 1)
@@ -238,4 +259,7 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
 convert_file(json.loads(sys.stdin.read()), module)
 #print (exp)
 
+#moduleref = binding.parse_assembly (str(module))
+
 print (module)
+#print (moduleref.as_bitcode ())
