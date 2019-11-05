@@ -33,8 +33,18 @@ def get_extract_func(high, low, bigwidth):
         get_extract_func.funcs[t] = func
 
     return get_extract_func.funcs[t]
-
 get_extract_func.funcs = {}
+
+def get_concat_func(widths):
+    widths = tuple(widths)
+    if widths not in get_concat_func.funcs:
+        total = sum (widths)
+        typ = ir.FunctionType (ir.IntType (total), [ir.IntType (x) for x in widths])
+        func = ir.Function (module, typ, "smt.concat" + "".join([".i%d" % x for x in widths]))
+        get_concat_func.funcs [widths] = func
+
+    return get_concat_func.funcs [widths]
+get_concat_func.funcs = {}
 
 def get_builder_op(op, irb):
     exp_map = {
@@ -246,19 +256,25 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
         finaltype = ir.IntType (int (exp['width']))
         widths = list(map(lambda e: int (e['width']), exp['children']))
         children = list(map(lambda e: convert_exp(e, irb), exp['children']))
-        children = list(map(lambda e: irb.zext (e, finaltype), children))
 
-        children = list(zip(widths, children))
+        if arie:
+            f = get_concat_func (widths)
+            return irb.call (f, children)
+        else:
 
-        children.reverse ()
+            children = list(map(lambda e: irb.zext (e, finaltype), children))
 
-        bigexp = children[0][1] # don't care about the first width
-        children = children[1:]
-        for (width, exp) in children:
-            const = ir.Constant (finaltype, width)
-            bigexp = irb.shl (bigexp, const)
-            bigexp = irb.or_ (bigexp, exp)
-        return bigexp
+            children = list(zip(widths, children))
+
+            children.reverse ()
+
+            bigexp = children[0][1] # don't care about the first width
+            children = children[1:]
+            for (width, exp) in children:
+                const = ir.Constant (finaltype, width)
+                bigexp = irb.shl (bigexp, const)
+                bigexp = irb.or_ (bigexp, exp)
+            return bigexp
     elif exp['op'] == "uextend":
         typ = ir.IntType (int (exp['width']))
         exp = convert_exp (exp['children'][1], irb)
