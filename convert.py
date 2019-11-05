@@ -7,6 +7,8 @@ import json
 
 #jsonir = json.loads(open(sys.argv[1], "r").read())
 
+arie = True
+
 vars = {}
 vertices = {}
 functions = {}
@@ -20,6 +22,19 @@ abort = ir.Function (module, voidfunctype, "abort")
 
 # Hack
 M = ir.GlobalVariable (module, ir.PointerType (ir.IntType (8)), "M")
+
+def get_extract_func(high, low, bigwidth):
+    smallwidth = high-low+1
+    t = (smallwidth, bigwidth)
+
+    if t not in get_extract_func.funcs:
+        typ = ir.FunctionType (ir.IntType (smallwidth), [ir.IntType (64), ir.IntType (64), ir.IntType (bigwidth)])
+        func = ir.Function (module, typ, "smt.extract.i%d.i%d" % (bigwidth, smallwidth))
+        get_extract_func.funcs[t] = func
+
+    return get_extract_func.funcs[t]
+
+get_extract_func.funcs = {}
 
 def get_builder_op(op, irb):
     exp_map = {
@@ -216,11 +231,17 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
         low = int(exp['children'][0]['const'], 16)
         high = int(exp['children'][1]['const'], 16) - 1
 
-        exp = convert_exp (exp['children'][2], irb)
+        newexp = convert_exp (exp['children'][2], irb)
 
-        shift_exp = irb.lshr (exp, ir.Constant (exp.type, low))
-        # Note: does not include high bit
-        return irb.trunc (shift_exp, ir.IntType (high - low + 1))
+        if arie:
+            f = get_extract_func (high, low, newexp.type.width) #exp['children'][2]['width'])
+            lowc = ir.Constant (ir.IntType (64), low)
+            highc = ir.Constant (ir.IntType (64), high)
+            return irb.call (f, [lowc, highc, newexp])
+        else:
+            shift_exp = irb.lshr (newexp, ir.Constant (newexp.type, low))
+            # Note: does not include high bit
+            return irb.trunc (shift_exp, ir.IntType (high - low + 1))
     elif exp['op'] == "concat":
         finaltype = ir.IntType (int (exp['width']))
         widths = list(map(lambda e: int (e['width']), exp['children']))
