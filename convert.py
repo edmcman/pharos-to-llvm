@@ -182,9 +182,12 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder ()):
         mem = M # ???
         addr = convert_exp (stmt['addr'], irb)
         val = convert_exp (stmt['exp'], irb)
-        ptr = irb.inttoptr (irb.add (irb.ptrtoint (mem, addr.type),
-                                     addr),
-                            val.type.as_pointer ())
+        if arie:
+            ptr = irb.gep (mem, [ir.Constant(ir.IntType (64), 0), addr])
+        else:
+            ptr = irb.inttoptr (irb.add (irb.ptrtoint (mem, addr.type),
+                                         addr),
+                                val.type.as_pointer ())
         return irb.store (val, ptr)
     elif stmt['op'] == "CallStmt":
         if stmt['calltype'] == "import":
@@ -244,10 +247,15 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
         _, f = convert_var_noload (exp, irb)
         return f (irb)
     elif exp['op'] == "read":
-        children = list(map(lambda e: convert_exp(e, irb), exp['children']))
-        addr = children[1]
-        mem = irb.ptrtoint (children[0], addr.type)
-        ptr = irb.inttoptr (irb.add (mem, addr), children[0].type)
+        m, _ = convert_var_noload (exp ['children'] [0], irb)
+        addr = convert_exp (exp ['children'] [1], irb)
+        if arie:
+            ptr = irb.gep (m, [ir.Constant(ir.IntType (64), 0), addr])
+        else:
+            assert False
+            # ejs: I think I broke this
+            mem = irb.ptrtoint (children[0], addr.type)
+            ptr = irb.inttoptr (irb.add (mem, addr), children[0].type)
         return irb.load (ptr)
     elif exp['op'] == "extract":
         low = int(exp['children'][0]['const'], 16)
