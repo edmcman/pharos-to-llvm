@@ -10,6 +10,7 @@ import json
 arie = True
 
 vars = {}
+exps = {}
 vertices = {}
 functions = {}
 import_functions = {}
@@ -65,7 +66,7 @@ def convert_file (file, module):
 
     # It is safe to not pass an irb because rax will always be a
     # global variable which won't use the builder
-    rax = convert_var_noload (file['special_regs'] ['rax'])
+    rax, _ = convert_var_noload (file['special_regs'] ['rax'])
 
     for func in file['functions'].items ():
         add_func (func, module)
@@ -166,14 +167,17 @@ def convert_stmts(stmts, rax, irb=ir.IRBuilder ()):
         convert_stmt (stmt, rax, irb)
 
 def convert_stmt(stmt, rax, irb=ir.IRBuilder ()):
-    #print (stmt)
+    #print ("stmt", stmt)
 
     if stmt['op'] == "InsnStmt":
         return None
     elif stmt['op'] == "RegWriteStmt":
-        dest = convert_var_noload (stmt['var'], irb)
         e = convert_exp (stmt['exp'], irb)
-        return irb.store (e, dest)
+        dest, _ = convert_var_noload (stmt['var'], value=e, irb=irb)
+        if dest is not None:
+            return irb.store (e, dest)
+        else:
+            return None
     elif stmt['op'] == "MemWriteStmt":
         mem = M # ???
         addr = convert_exp (stmt['addr'], irb)
@@ -200,9 +204,9 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder ()):
     else:
         assert False
 
-def convert_var_noload (exp, irb=ir.IRBuilder ()):
+def convert_var_noload (exp, irb=ir.IRBuilder (), value=None):
     if exp['varname'] == 'M':
-        return M
+        return M, lambda irb: irb.load (M)
 
     if exp['varid'] not in vars:
         if exp['varname'] == 'M':
@@ -210,15 +214,22 @@ def convert_var_noload (exp, irb=ir.IRBuilder ()):
         else:
             typ = ir.IntType (int(exp['width']))
 
-        # Use an alloca for temporaries
+        # Use registers for temporaries
         if exp['varname'] == "":
-            varname = "v%d" % int(exp['varid'])
-            vars[exp['varid']] = irb.alloca (typ, name=varname)
+            if value is not None:
+                vars[exp['varid']] = None
+                exps[exp['varid']] = lambda irb: value
+            else:
+                varname = "v%d" % int(exp['varid'])
+                print ("WARNING: %s accessed before defined. This is probably an unknown expression." % varname, file=sys.stderr)
+                vars[exp['varid']] = irb.alloca (typ, name=varname)
+                exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
         else:
             varname = exp['varname']
             vars[exp['varid']] = ir.GlobalVariable(module, typ, varname)
+            exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
 
-    return vars[exp['varid']]
+    return (vars[exp['varid']], exps[exp['varid']])
 
 def convert_exp(exp, irb=ir.IRBuilder ()):
     #print ("exp", exp)
@@ -230,7 +241,8 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
         c = int(exp['const'], 16)
         return ir.Constant(typ, c)
     elif exp['op'] == "variable":
-        return irb.load (convert_var_noload (exp, irb))
+        _, f = convert_var_noload (exp, irb)
+        return f (irb)
     elif exp['op'] == "read":
         children = list(map(lambda e: convert_exp(e, irb), exp['children']))
         addr = children[1]
