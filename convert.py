@@ -183,7 +183,7 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder ()):
         addr = convert_exp (stmt['addr'], irb)
         val = convert_exp (stmt['exp'], irb)
         if arie:
-            ptr = irb.gep (mem, [ir.Constant(ir.IntType (64), 0), addr])
+            ptr = irb.gep (irb.load (mem), [addr])
         else:
             ptr = irb.inttoptr (irb.add (irb.ptrtoint (mem, addr.type),
                                          addr),
@@ -250,10 +250,10 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
         _, f = convert_var (exp, irb)
         return f (irb)
     elif exp['op'] == "read":
-        m, _ = convert_var (exp ['children'] [0], irb)
+        m = M
         addr = convert_exp (exp ['children'] [1], irb)
         if arie:
-            ptr = irb.gep (m, [ir.Constant(ir.IntType (64), 0), addr])
+            ptr = irb.gep (irb.load (m), [addr])
         else:
             assert False
             # ejs: I think I broke this
