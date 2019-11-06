@@ -2,10 +2,9 @@
 
 from functools import reduce
 from llvmlite import ir, binding
-import sys
+import fileinput
 import json
-
-#jsonir = json.loads(open(sys.argv[1], "r").read())
+import sys
 
 arie = True
 
@@ -334,23 +333,5 @@ def convert_exp(exp, irb=ir.IRBuilder (), funcaddr=None):
             # By specifying a name we detect mismatches in the number of arguments
             return buildf (*children, name="generic")
 
-#double = ir.DoubleType()
-#void = ir.VoidType()
-#fnty = ir.FunctionType(void, [])
-#func = ir.Function(module, fnty, name="test")
-#block = func.append_basic_block(name="entry")
-
-# exp1 = convert_exp(json.loads(conststr))
-# exp2 = convert_exp(json.loads(conststr))
-# irb = ir.IRBuilder(block)
-# exp = irb.add(exp1, exp2)
-# print(exp)
-
-#exp = (convert_exp(json.loads(sys.stdin.read()), irb=ir.IRBuilder(block)))
-convert_file(json.loads(sys.stdin.read()), module)
-#print (exp)
-
-#moduleref = binding.parse_assembly (str(module))
-
+convert_file(json.loads("\n".join(f for f in fileinput.input())), module)
 print (module)
-#print (moduleref.as_bitcode ())
