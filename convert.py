@@ -228,7 +228,7 @@ def convert_var_noload (exp, irb=ir.IRBuilder (), value=None):
                 vars[exp['varid']] = irb.alloca (typ, name=varname)
                 exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
         else:
-            varname = exp['varname']
+            varname = "pharos.reg." + exp['varname']
             vars[exp['varid']] = ir.GlobalVariable(module, typ, varname)
             exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
 
