@@ -66,7 +66,7 @@ def convert_file (file, module):
 
     # It is safe to not pass an irb because rax will always be a
     # global variable which won't use the builder
-    rax, _ = convert_var_noload (file['special_regs'] ['rax'])
+    rax, _ = convert_var (file['special_regs'] ['rax'])
 
     for func in file['functions'].items ():
         add_func (func, module)
@@ -173,7 +173,7 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder ()):
         return None
     elif stmt['op'] == "RegWriteStmt":
         e = convert_exp (stmt['exp'], irb)
-        dest, _ = convert_var_noload (stmt['var'], value=e, irb=irb)
+        dest, _ = convert_var (stmt['var'], value=e, irb=irb)
         if dest is not None:
             return irb.store (e, dest)
         else:
@@ -207,7 +207,7 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder ()):
     else:
         assert False
 
-def convert_var_noload (exp, irb=ir.IRBuilder (), value=None):
+def convert_var (exp, irb=ir.IRBuilder (), value=None):
     if exp['varname'] == 'M':
         return M, lambda irb: irb.load (M)
 
@@ -244,10 +244,10 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
         c = int(exp['const'], 16)
         return ir.Constant(typ, c)
     elif exp['op'] == "variable":
-        _, f = convert_var_noload (exp, irb)
+        _, f = convert_var (exp, irb)
         return f (irb)
     elif exp['op'] == "read":
-        m, _ = convert_var_noload (exp ['children'] [0], irb)
+        m, _ = convert_var (exp ['children'] [0], irb)
         addr = convert_exp (exp ['children'] [1], irb)
         if arie:
             ptr = irb.gep (m, [ir.Constant(ir.IntType (64), 0), addr])
