@@ -224,7 +224,8 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
                 exps[exp['varid']] = lambda irb: value
             else:
                 varname = "v%d" % int(exp['varid'])
-                print ("WARNING: %s accessed before defined. This is probably an unknown expression." % varname, file=sys.stderr)
+                print ("WARNING: %s accessed before defined. This should not happen." % varname, file=sys.stderr)
+                assert False
                 vars[exp['varid']] = irb.alloca (typ, name=varname)
                 exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
         else:
@@ -239,7 +240,9 @@ def convert_exp(exp, irb=ir.IRBuilder ()):
 
     assert (exp['type'] == "exp")
 
-    if exp['op'] == "constant":
+    if exp['op'] == "unknown":
+        return ir.Constant (ir.IntType (int (exp['width'])), ir.Undefined)
+    elif exp['op'] == "constant":
         typ = ir.IntType (int(exp['width']))
         c = int(exp['const'], 16)
         return ir.Constant(typ, c)
