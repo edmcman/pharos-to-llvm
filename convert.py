@@ -218,6 +218,8 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder (), funcaddr=None):
 
 def convert_var (exp, irb=ir.IRBuilder (), value=None):
     if exp['varname'] == 'M':
+        # This shouldn't happen anymore
+        assert False
         return M, lambda irb: irb.load (M)
 
     if exp['varid'] not in vars:
@@ -262,7 +264,7 @@ def convert_exp(exp, irb=ir.IRBuilder (), funcaddr=None):
         m = M
         addr = convert_exp (exp ['children'] [1], irb, funcaddr)
         if arie:
-            ptr = irb.gep (irb.load (m), [addr])
+            ptr = irb.gep (get_mem_for_func (funcaddr, irb), [addr])
         else:
             assert False
             # ejs: I think I broke this
