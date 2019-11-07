@@ -293,90 +293,99 @@ def convert_exp_ptr (exp, irb=ir.IRBuilder (), funcaddr=None):
         bvexp = convert_exp_bv (exp, irb, funcaddr)
         return irb.inttoptr (bvexp, pointertype)
 
-def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None):
-
+def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
+    if cache is None:
+        cache = {}
     assert (exp['type'] == "exp")
 
-    if exp['op'] == "unknown":
-        return ir.Constant (ir.IntType (int (exp['width'])), ir.Undefined)
-    elif exp['op'] == "constant":
-        typ = ir.IntType (int(exp['width']))
-        c = int(exp['const'], 16)
-        return ir.Constant(typ, c)
-    elif exp['op'] == "variable":
-        _, f = convert_var (exp, irb)
-        return f (irb)
-    elif exp['op'] == "read":
-        addr = convert_exp_ptr (exp ['children'] [1], irb, funcaddr)
-        if arie:
-            ptr = addr
+    def convert_exp_bv_int (exp, irb, funcaddr):
+        if exp['op'] == "unknown":
+            return ir.Constant (ir.IntType (int (exp['width'])), ir.Undefined)
+        elif exp['op'] == "constant":
+            typ = ir.IntType (int(exp['width']))
+            c = int(exp['const'], 16)
+            return ir.Constant(typ, c)
+        elif exp['op'] == "variable":
+            _, f = convert_var (exp, irb)
+            return f (irb)
+        elif exp['op'] == "read":
+            addr = convert_exp_ptr (exp ['children'] [1], irb, funcaddr)
+            if arie:
+                ptr = addr
+            else:
+                assert False
+                mem = irb.ptrtoint (children[0], addr.type)
+                ptr = irb.inttoptr (irb.add (mem, addr), children[0].type)
+            return irb.load (ptr)
+        elif exp['op'] == "extract":
+            low = int(exp['children'][0]['const'], 16)
+            high = int(exp['children'][1]['const'], 16) - 1
+
+            newexp = convert_exp_bv (exp['children'][2], irb, funcaddr, cache)
+
+            if arie:
+                f = get_extract_func (high, low, newexp.type.width) #exp['children'][2]['width'])
+                lowc = ir.Constant (ir.IntType (64), low)
+                highc = ir.Constant (ir.IntType (64), high)
+                return irb.call (f, [lowc, highc, newexp])
+            else:
+                shift_exp = irb.lshr (newexp, ir.Constant (newexp.type, low))
+                # Note: does not include high bit
+                return irb.trunc (shift_exp, ir.IntType (high - low + 1))
+        elif exp['op'] == "concat":
+            finaltype = ir.IntType (int (exp['width']))
+            widths = list(map(lambda e: int (e['width']), exp['children']))
+            children = list(map(lambda e: convert_exp_bv(e, irb, funcaddr, cache), exp['children']))
+
+            if arie:
+                f = get_concat_func (widths)
+                return irb.call (f, children)
+            else:
+
+                children = list(map(lambda e: irb.zext (e, finaltype), children))
+
+                children = list(zip(widths, children))
+
+                children.reverse ()
+
+                bigexp = children[0][1] # don't care about the first width
+                children = children[1:]
+                for (width, exp) in children:
+                    const = ir.Constant (finaltype, width)
+                    bigexp = irb.shl (bigexp, const)
+                    bigexp = irb.or_ (bigexp, exp)
+                return bigexp
+        elif exp['op'] == "uextend":
+            typ = ir.IntType (int (exp['width']))
+            exp = convert_exp_bv (exp['children'][1], irb, funcaddr, cache)
+            return irb.zext (exp, typ)
+        elif exp['op'] == "zerop":
+            assert (len(exp['children']) == 1)
+            exp = convert_exp_bv (exp['children'][0], irb, funcaddr, cache)
+            zero = ir.Constant (exp.type, 0)
+            return irb.icmp_unsigned ('==', exp, zero)
         else:
-            assert False
-            mem = irb.ptrtoint (children[0], addr.type)
-            ptr = irb.inttoptr (irb.add (mem, addr), children[0].type)
-        return irb.load (ptr)
-    elif exp['op'] == "extract":
-        low = int(exp['children'][0]['const'], 16)
-        high = int(exp['children'][1]['const'], 16) - 1
+            # Generic conversion when all children can simply be passed to
+            # the corresponding builder method
+            buildf = get_builder_op (exp['op'], irb)
+            children = list(map(lambda e: convert_exp_bv (e, irb, funcaddr, cache), exp['children']))
+            if exp['op'] in shifts:
+                # ROSE has an annoying habit of using stupid types for constants
+                children[0] = irb.zext (children[0], children[1].type)
+                children.reverse ()
+            if exp['op'] in reduction and len(exp['children']) > 2:
+                # We have n > 2 children, but LLVM only wants 2
+                return reduce (lambda a, b: buildf (a, b), children)
+            else:
+                # By specifying a name we detect mismatches in the number of arguments
+                return buildf (*children, name="generic")
 
-        newexp = convert_exp_bv (exp['children'][2], irb, funcaddr)
+    if str (exp) not in cache:
+        cache [str(exp)] = convert_exp_bv_int (exp, irb, funcaddr)
 
-        if arie:
-            f = get_extract_func (high, low, newexp.type.width) #exp['children'][2]['width'])
-            lowc = ir.Constant (ir.IntType (64), low)
-            highc = ir.Constant (ir.IntType (64), high)
-            return irb.call (f, [lowc, highc, newexp])
-        else:
-            shift_exp = irb.lshr (newexp, ir.Constant (newexp.type, low))
-            # Note: does not include high bit
-            return irb.trunc (shift_exp, ir.IntType (high - low + 1))
-    elif exp['op'] == "concat":
-        finaltype = ir.IntType (int (exp['width']))
-        widths = list(map(lambda e: int (e['width']), exp['children']))
-        children = list(map(lambda e: convert_exp_bv(e, irb, funcaddr), exp['children']))
+    return cache [str(exp)]
 
-        if arie:
-            f = get_concat_func (widths)
-            return irb.call (f, children)
-        else:
 
-            children = list(map(lambda e: irb.zext (e, finaltype), children))
-
-            children = list(zip(widths, children))
-
-            children.reverse ()
-
-            bigexp = children[0][1] # don't care about the first width
-            children = children[1:]
-            for (width, exp) in children:
-                const = ir.Constant (finaltype, width)
-                bigexp = irb.shl (bigexp, const)
-                bigexp = irb.or_ (bigexp, exp)
-            return bigexp
-    elif exp['op'] == "uextend":
-        typ = ir.IntType (int (exp['width']))
-        exp = convert_exp_bv (exp['children'][1], irb, funcaddr)
-        return irb.zext (exp, typ)
-    elif exp['op'] == "zerop":
-        assert (len(exp['children']) == 1)
-        exp = convert_exp_bv (exp['children'][0], irb, funcaddr)
-        zero = ir.Constant (exp.type, 0)
-        return irb.icmp_unsigned ('==', exp, zero)
-    else:
-        # Generic conversion when all children can simply be passed to
-        # the corresponding builder method
-        buildf = get_builder_op (exp['op'], irb)
-        children = list(map(lambda e: convert_exp_bv (e, irb, funcaddr), exp['children']))
-        if exp['op'] in shifts:
-            # ROSE has an annoying habit of using stupid types for constants
-            children[0] = irb.zext (children[0], children[1].type)
-            children.reverse ()
-        if exp['op'] in reduction and len(exp['children']) > 2:
-            # We have n > 2 children, but LLVM only wants 2
-            return reduce (lambda a, b: buildf (a, b), children)
-        else:
-            # By specifying a name we detect mismatches in the number of arguments
-            return buildf (*children, name="generic")
 
 convert_file(json.loads("\n".join(f for f in fileinput.input())), module)
 print (module)
