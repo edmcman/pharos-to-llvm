@@ -16,10 +16,13 @@ function_mem_reg = {}
 import_functions = {}
 
 module = ir.Module(name="test")
+module.triple = "x86_64-apple-macosx10.14.0"
+module.data_layout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
 
 importfunctype = ir.FunctionType (ir.IntType (64), [])
 voidfunctype = ir.FunctionType (ir.VoidType (), [])
 abort = ir.Function (module, voidfunctype, "abort")
+abort.attributes.add('noreturn')
 
 # Hack
 M = ir.GlobalVariable (module, ir.PointerType (ir.IntType (8)), "M")
@@ -38,6 +41,9 @@ def get_extract_func(high, low, bigwidth):
     if t not in get_extract_func.funcs:
         typ = ir.FunctionType (ir.IntType (smallwidth), [ir.IntType (64), ir.IntType (64), ir.IntType (bigwidth)])
         func = ir.Function (module, typ, "smt.extract.i%d.i%d" % (bigwidth, smallwidth))
+        func.attributes.add("readnone")
+        func.attributes.add("norecurse")
+        func.attributes.add("nounwind")
         get_extract_func.funcs[t] = func
 
     return get_extract_func.funcs[t]
@@ -49,6 +55,9 @@ def get_concat_func(widths):
         total = sum (widths)
         typ = ir.FunctionType (ir.IntType (total), [ir.IntType (x) for x in widths])
         func = ir.Function (module, typ, "smt.concat" + "".join([".i%d" % x for x in widths]))
+        func.attributes.add("readnone")
+        func.attributes.add("norecurse")
+        func.attributes.add("nounwind")
         get_concat_func.funcs [widths] = func
 
     return get_concat_func.funcs [widths]
@@ -240,7 +249,10 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
                 exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
         else:
             varname = "pharos.reg." + exp['varname']
-            vars[exp['varid']] = ir.GlobalVariable(module, typ, varname)
+            var = ir.GlobalVariable(module, typ, varname)
+            var.initializer = ir.Constant(typ, 0)
+            var.linkage = 'internal'
+            vars[exp['varid']] = var
             exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
 
     return (vars[exp['varid']], exps[exp['varid']])
