@@ -7786,23 +7786,6 @@
                     "stmts": [
                         {
                             "type": "stmt",
-                            "op": "RegWriteStmt",
-                            "var": {
-                                "type": "exp",
-                                "width": "64",
-                                "op": "variable",
-                                "varid": "29918",
-                                "varname": "rsp_0"
-                            },
-                            "exp": {
-                                "type": "exp",
-                                "width": "64",
-                                "op": "constant",
-                                "const": "00007fffffff0000"
-                            }
-                        },
-                        {
-                            "type": "stmt",
                             "op": "InsnStmt",
                             "addr": "4196384",
                             "asm": "400820: push      rbx"

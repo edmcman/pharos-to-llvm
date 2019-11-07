@@ -15,24 +15,18 @@ functions = {}
 function_mem_reg = {}
 import_functions = {}
 
+STACK_SIZE = 10 * 1024 * 1024
+
 module = ir.Module(name="test")
 module.triple = "x86_64-apple-macosx10.14.0"
 module.data_layout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
 
+bytetype = ir.IntType (8)
+pointertype = bytetype.as_pointer ()
 importfunctype = ir.FunctionType (ir.IntType (64), [])
 voidfunctype = ir.FunctionType (ir.VoidType (), [])
 abort = ir.Function (module, voidfunctype, "abort")
 abort.attributes.add('noreturn')
-
-# Hack
-M = ir.GlobalVariable (module, ir.PointerType (ir.IntType (8)), "M")
-
-def get_mem_for_func(addr, irb):
-    if addr in function_mem_reg:
-        return function_mem_reg[addr]
-    else:
-        assert False
-        return irb.load (M)
 
 def get_extract_func(high, low, bigwidth):
     smallwidth = high-low+1
@@ -83,6 +77,7 @@ def convert_file (file, module):
     # It is safe to not pass an irb because rax will always be a
     # global variable which won't use the builder
     rax, _ = convert_var (file['special_regs'] ['rax'])
+    rsp, _ = convert_var (file['special_regs'] ['rsp'])
 
     for func in file['functions'].items ():
         add_func (func, module)
@@ -95,6 +90,9 @@ def convert_file (file, module):
     block = entry.append_basic_block("entry")
     irb = ir.IRBuilder (block)
     irb.call (init, [])
+    stack = irb.alloca (ir.IntType (8), STACK_SIZE, name="stack")
+    stack = irb.gep (stack, [ir.Constant (bytetype, STACK_SIZE-8)], name="stack_top")
+    irb.store (stack, rsp)
     irb.call (functions [int (file['sourcefunc'])], [])
     irb.ret_void ()
 
@@ -126,7 +124,6 @@ def add_func (func, module):
         if first:
             first = False
             irb = ir.IRBuilder (entry)
-            function_mem_reg[addr] = irb.load (M, name="M")
             irb.branch (vertices [addr] [v['id']])
 
 def convert_func (func, module, rax):
@@ -170,7 +167,7 @@ def convert_vertex (v, funcaddr, body, llvmfunc, rax):
             irb.branch (vertices [funcaddr] [e['dst']])
             #irb.branch (convert_vertexid (e['dst'], llvmfunc))
         elif len(edges) == 2:
-            cond = convert_exp (edges[0] ['cond'], irb)
+            cond = convert_exp_bv (edges[0] ['cond'], irb)
             irb.cbranch (cond,
                          vertices [funcaddr] [edges[0] ['dst']],
                          vertices [funcaddr] [edges[1] ['dst']])
@@ -183,25 +180,44 @@ def convert_stmts(stmts, rax, irb=ir.IRBuilder (), funcaddr=None):
     for stmt in stmts:
         convert_stmt (stmt, rax, irb, funcaddr)
 
+# Should we convert the following regwritestmt as a write to a pointer or a write to a bitvector?
+def should_convert_regwrite_as_pointer (stmt):
+    if stmt ['var'] ['varname'] == "rsp_0":
+        return True
+
+    if stmt ['var'] ['varname'] == "":
+        # Are we saving a snapshot of rsp?
+        if stmt ['exp'] ['op'] == "variable" and stmt ['exp'] ['varname'] == "rsp_0":
+            return True
+
+    return False
+
 def convert_stmt(stmt, rax, irb=ir.IRBuilder (), funcaddr=None):
     #print ("stmt", stmt)
 
     if stmt['op'] == "InsnStmt":
         return None
     elif stmt['op'] == "RegWriteStmt":
-        e = convert_exp (stmt['exp'], irb, funcaddr)
+
+        if should_convert_regwrite_as_pointer (stmt):
+            #print ("Converting as a ptr", stmt ['var'])
+            e = convert_exp_ptr (stmt['exp'], irb, funcaddr)
+        else:
+            e = convert_exp_bv (stmt['exp'], irb, funcaddr)
+
         dest, _ = convert_var (stmt['var'], value=e, irb=irb)
         if dest is not None:
+            assert e.type == dest.type.pointee
             return irb.store (e, dest)
         else:
             return None
     elif stmt['op'] == "MemWriteStmt":
-        mem = M # ???
-        addr = convert_exp (stmt['addr'], irb, funcaddr)
-        val = convert_exp (stmt['exp'], irb, funcaddr)
+        addr = convert_exp_ptr (stmt['addr'], irb, funcaddr)
+        val = convert_exp_bv (stmt['exp'], irb, funcaddr)
         if arie:
-            ptr = irb.gep (get_mem_for_func (funcaddr, irb), [addr])
+            ptr = addr
         else:
+            assert False
             ptr = irb.inttoptr (irb.add (irb.ptrtoint (mem, addr.type),
                                          addr),
                                 val.type.as_pointer ())
@@ -231,8 +247,8 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
         return M, lambda irb: irb.load (M)
 
     if exp['varid'] not in vars:
-        if exp['varname'] == 'M':
-            typ = ir.PointerType (ir.IntType (8))
+        if exp['varname'] == 'rsp_0':
+            typ = pointertype
         else:
             typ = ir.IntType (int(exp['width']))
 
@@ -243,7 +259,7 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
                 exps[exp['varid']] = lambda irb: value
             else:
                 varname = "v%d" % int(exp['varid'])
-                print ("WARNING: %s accessed before defined. This should not happen." % varname, file=sys.stderr)
+                print ("WARNING: %s accessed before defined. This should not happen." % exp, file=sys.stderr)
                 assert False
                 vars[exp['varid']] = irb.alloca (typ, name=varname)
                 exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
@@ -253,12 +269,31 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
             var.initializer = ir.Constant(typ, 0)
             var.linkage = 'internal'
             vars[exp['varid']] = var
-            exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
+            if exp['varname'] == 'rsp_0':
+                # Most of the time we don't want to access rsp as a pointer
+                exps[exp['varid']] = lambda irb: irb.ptrtoint (irb.load (vars[exp['varid']]), ir.IntType (int (exp['width'])))
+            else:
+                exps[exp['varid']] = lambda irb: irb.load (vars[exp['varid']])
 
     return (vars[exp['varid']], exps[exp['varid']])
 
-def convert_exp(exp, irb=ir.IRBuilder (), funcaddr=None):
+def convert_exp_ptr (exp, irb=ir.IRBuilder (), funcaddr=None):
     #print ("exp", exp)
+
+    assert (exp['type'] == "exp")
+
+    if exp['op'] == "add":
+        ptr = convert_exp_ptr (exp ['children'] [0], irb, funcaddr)
+        offset = convert_exp_bv (exp ['children'] [1], irb, funcaddr)
+        return irb.gep (ptr, [offset])
+    elif exp['op'] == "variable" and exp['varname'] == "rsp_0":
+        v, _ = convert_var (exp, irb)
+        return irb.load (v)
+    else:
+        bvexp = convert_exp_bv (exp, irb, funcaddr)
+        return irb.inttoptr (bvexp, pointertype)
+
+def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None):
 
     assert (exp['type'] == "exp")
 
@@ -272,13 +307,11 @@ def convert_exp(exp, irb=ir.IRBuilder (), funcaddr=None):
         _, f = convert_var (exp, irb)
         return f (irb)
     elif exp['op'] == "read":
-        m = M
-        addr = convert_exp (exp ['children'] [1], irb, funcaddr)
+        addr = convert_exp_ptr (exp ['children'] [1], irb, funcaddr)
         if arie:
-            ptr = irb.gep (get_mem_for_func (funcaddr, irb), [addr])
+            ptr = addr
         else:
             assert False
-            # ejs: I think I broke this
             mem = irb.ptrtoint (children[0], addr.type)
             ptr = irb.inttoptr (irb.add (mem, addr), children[0].type)
         return irb.load (ptr)
@@ -286,7 +319,7 @@ def convert_exp(exp, irb=ir.IRBuilder (), funcaddr=None):
         low = int(exp['children'][0]['const'], 16)
         high = int(exp['children'][1]['const'], 16) - 1
 
-        newexp = convert_exp (exp['children'][2], irb, funcaddr)
+        newexp = convert_exp_bv (exp['children'][2], irb, funcaddr)
 
         if arie:
             f = get_extract_func (high, low, newexp.type.width) #exp['children'][2]['width'])
@@ -300,7 +333,7 @@ def convert_exp(exp, irb=ir.IRBuilder (), funcaddr=None):
     elif exp['op'] == "concat":
         finaltype = ir.IntType (int (exp['width']))
         widths = list(map(lambda e: int (e['width']), exp['children']))
-        children = list(map(lambda e: convert_exp(e, irb, funcaddr), exp['children']))
+        children = list(map(lambda e: convert_exp_bv(e, irb, funcaddr), exp['children']))
 
         if arie:
             f = get_concat_func (widths)
@@ -322,18 +355,18 @@ def convert_exp(exp, irb=ir.IRBuilder (), funcaddr=None):
             return bigexp
     elif exp['op'] == "uextend":
         typ = ir.IntType (int (exp['width']))
-        exp = convert_exp (exp['children'][1], irb, funcaddr)
+        exp = convert_exp_bv (exp['children'][1], irb, funcaddr)
         return irb.zext (exp, typ)
     elif exp['op'] == "zerop":
         assert (len(exp['children']) == 1)
-        exp = convert_exp (exp['children'][0], irb, funcaddr)
+        exp = convert_exp_bv (exp['children'][0], irb, funcaddr)
         zero = ir.Constant (exp.type, 0)
         return irb.icmp_unsigned ('==', exp, zero)
     else:
         # Generic conversion when all children can simply be passed to
         # the corresponding builder method
         buildf = get_builder_op (exp['op'], irb)
-        children = list(map(lambda e: convert_exp(e, irb, funcaddr), exp['children']))
+        children = list(map(lambda e: convert_exp_bv (e, irb, funcaddr), exp['children']))
         if exp['op'] in shifts:
             # ROSE has an annoying habit of using stupid types for constants
             children[0] = irb.zext (children[0], children[1].type)
