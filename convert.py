@@ -23,6 +23,8 @@ module.data_layout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
 
 bytetype = ir.IntType (8)
 pointertype = bytetype.as_pointer ()
+# integer type that is wide enough to store a pointer
+pointerint = ir.IntType(64)
 importfunctype = ir.FunctionType (ir.IntType (64), [])
 voidfunctype = ir.FunctionType (ir.VoidType (), [])
 abort = ir.Function (module, voidfunctype, "abort")
@@ -91,7 +93,7 @@ def convert_file (file, module):
     irb = ir.IRBuilder (block)
     irb.call (init, [])
     stack = irb.alloca (ir.IntType (8), STACK_SIZE, name="stack")
-    stack = irb.gep (stack, [ir.Constant (bytetype, STACK_SIZE-8)], name="stack_top")
+    stack = irb.gep (stack, [ir.Constant (pointerint, STACK_SIZE - 8)], name="stack_top")
     irb.store (stack, rsp)
     irb.call (functions [int (file['sourcefunc'])], [])
     irb.ret_void ()
