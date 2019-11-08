@@ -266,7 +266,7 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
         else:
             varname = "pharos.reg." + exp['varname']
             var = ir.GlobalVariable(module, typ, varname)
-            var.initializer = ir.Constant(typ, 0)
+            var.initializer = ir.Constant(typ, None)
             var.linkage = 'internal'
             vars[exp['varid']] = var
             if exp['varname'] == 'rsp_0':
