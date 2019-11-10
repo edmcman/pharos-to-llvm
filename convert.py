@@ -88,10 +88,13 @@ def convert_file (file, module):
         convert_func (func, module, rax)
 
     entry = ir.Function (module, voidfunctype, "main")
-    init = ir.Function (module, voidfunctype, "initialize_stuff")
+    entry.attributes.add('nounwind')
+    entry.attributes.add('norecurse')
+
+    #init = ir.Function (module, voidfunctype, "initialize_stuff")
     block = entry.append_basic_block("entry")
     irb = ir.IRBuilder (block)
-    irb.call (init, [])
+    #irb.call (init, [])
     stack = irb.alloca (ir.IntType (8), STACK_SIZE, name="stack")
     stack = irb.gep (stack, [ir.Constant (pointerint, STACK_SIZE - 8)], name="stack_top")
     irb.store (stack, rsp)
@@ -102,6 +105,7 @@ def get_import_func (file, func):
     tuple = (file, func)
     if tuple not in import_functions:
         func = ir.Function (module, importfunctype, name="%s!%s" % (file, func))
+        func.attributes.add('inaccessiblememonly')
         import_functions [tuple] = func
 
     return import_functions [tuple]
@@ -114,6 +118,7 @@ def add_func (func, module):
     void = ir.VoidType()
     fnty = ir.FunctionType(void, [])
     func = ir.Function(module, fnty, name=str("0x%x" % addr))
+    func.linkage = 'internal'
     entry = func.append_basic_block (name='entry')
     functions[addr] = func
     first = True
