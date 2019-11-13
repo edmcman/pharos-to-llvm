@@ -97,6 +97,8 @@ def convert_file (file, module):
     #irb.call (init, [])
 
     for var, key in file['regs'].items ():
+        if var == "rsp_0":
+            continue
         llvmvar, _ = convert_var (key)
         irb.store (ir.Constant (llvmvar.type.pointee, 0), llvmvar)
 
