@@ -78,8 +78,8 @@ def convert_file (file, module):
 
     # It is safe to not pass an irb because rax will always be a
     # global variable which won't use the builder
-    rax, _ = convert_var (file['special_regs'] ['rax'])
-    rsp, _ = convert_var (file['special_regs'] ['rsp'])
+    rax, _ = convert_var (file['regs'] ['rax_0'])
+    rsp, _ = convert_var (file['regs'] ['rsp_0'])
 
     for func in file['functions'].items ():
         add_func (func, module)
@@ -95,6 +95,11 @@ def convert_file (file, module):
     block = entry.append_basic_block("entry")
     irb = ir.IRBuilder (block)
     #irb.call (init, [])
+
+    for var, key in file['regs'].items ():
+        llvmvar, _ = convert_var (key)
+        irb.store (ir.Constant (llvmvar.type.pointee, 0), llvmvar)
+
     stack = irb.alloca (ir.IntType (8), STACK_SIZE, name="stack")
     stack = irb.gep (stack, [ir.Constant (pointerint, STACK_SIZE - 8)], name="stack_top")
     irb.store (stack, rsp)
@@ -223,6 +228,9 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder (), funcaddr=None):
         val = convert_exp_bv (stmt['exp'], irb, funcaddr)
         if arie:
             ptr = addr
+            # Recast pointer if needed
+            if ptr.type != val.type.as_pointer ():
+                ptr = irb.bitcast (ptr, val.type.as_pointer ())
         else:
             assert False
             ptr = irb.inttoptr (irb.add (irb.ptrtoint (mem, addr.type),
@@ -319,6 +327,9 @@ def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
             addr = convert_exp_ptr (exp ['children'] [1], irb, funcaddr)
             if arie:
                 ptr = addr
+                # Bitcast pointer if needed
+                if ptr.type.pointee.width != exp['width']:
+                    ptr = irb.bitcast (ptr, ir.IntType (int (exp['width'])).as_pointer ())
             else:
                 assert False
                 mem = irb.ptrtoint (children[0], addr.type)
