@@ -65,8 +65,9 @@ def get_builder_op(op, irb):
         'and': 'and_',
         'invert': 'neg',
         'xor': 'xor',
+        'or': 'or_',
         'asr': 'ashr',
-        'umul': 'mul'
+        'umul': 'mul',
     }
     return getattr(irb, exp_map[op])
 
@@ -375,6 +376,10 @@ def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
                     bigexp = irb.shl (bigexp, const)
                     bigexp = irb.or_ (bigexp, exp)
                 return bigexp
+        elif exp['op'] == "smul":
+            children = list(map(lambda e: convert_exp_bv (e, irb, funcaddr, cache), exp['children']))
+            struct = irb.smul_with_overflow (children[0], children[1])
+            return irb.extract_value (struct, 0)
         elif exp['op'] == "uextend":
             typ = ir.IntType (int (exp['width']))
             exp = convert_exp_bv (exp['children'][1], irb, funcaddr, cache)
