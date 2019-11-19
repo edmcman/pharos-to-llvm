@@ -68,11 +68,17 @@ def get_builder_op(op, irb):
         'or': 'or_',
         'asr': 'ashr',
         'umul': 'mul',
+        'ite': 'select',
+        'sdiv': 'sdiv',
+        'smod': 'srem',
     }
     return getattr(irb, exp_map[op])
 
 shifts = ['asr']
-reduction = ['xor', 'add']
+reduction = ['xor', 'add', 'and']
+
+cast_first = ['smod']
+cast_second = ['sdiv']
 
 def convert_file (file, module):
     # Declare stuff
@@ -316,6 +322,23 @@ def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
         cache = {}
     assert (exp['type'] == "exp")
 
+    def cast_to (irb, fromexp, totype, signed):
+        frombits = fromexp.type.width
+        tobits = totype.width
+
+        if frombits == tobits:
+            return fromexp
+        elif frombits < tobits:
+            if signed:
+                return irb.sext (fromexp, totype)
+            else:
+                return irb.zext (fromexp, totype)
+        elif frombits > tobits:
+            return irb.trunc (fromexp, totype)
+        else:
+            assert False
+
+
     def convert_exp_bv_int (exp, irb, funcaddr):
         if exp['op'] == "unknown":
             return ir.Constant (ir.IntType (int (exp['width'])), ir.Undefined)
@@ -384,6 +407,10 @@ def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
             typ = ir.IntType (int (exp['width']))
             exp = convert_exp_bv (exp['children'][1], irb, funcaddr, cache)
             return irb.zext (exp, typ)
+        elif exp['op'] == "sextend":
+            typ = ir.IntType (int (exp['width']))
+            exp = convert_exp_bv (exp['children'][1], irb, funcaddr, cache)
+            return irb.sext (exp, typ)
         elif exp['op'] == "zerop":
             assert (len(exp['children']) == 1)
             exp = convert_exp_bv (exp['children'][0], irb, funcaddr, cache)
@@ -398,6 +425,12 @@ def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
                 # ROSE has an annoying habit of using stupid types for constants
                 children[0] = irb.zext (children[0], children[1].type)
                 children.reverse ()
+            if exp['op'] in cast_first:
+                # ROSE allows first arg to be different type, but LLVM does not
+                children[0] = cast_to (irb, children[0], children[1].type, True)
+            if exp['op'] in cast_second:
+                # ROSE allows second arg to be different type, but LLVM does not
+                children[1] = cast_to (irb, children[1], children[0].type, True)
             if exp['op'] in reduction and len(exp['children']) > 2:
                 # We have n > 2 children, but LLVM only wants 2
                 return reduce (lambda a, b: buildf (a, b), children)
