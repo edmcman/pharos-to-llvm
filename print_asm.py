@@ -159,6 +159,35 @@ class AsmPrinter(object):
             low, high, body = v['children']
             self.print_exp(body, out)
             out.write('[{}:{}]'.format(int(low['const']), int(high['const'])))
+        elif op == 'sdiv' or op == 'smod':
+            kids = v['children']
+            kid0, kid1 = kids
+            self.print_exp(kid0, out)
+            out.write(' ' + op + ' ')
+            self.print_exp(kid1, out)
+        elif op == 'sextend' or op == 'uextend':
+            kids = v['children']
+            kid0, kid1 = kids
+            out.write(op[0:4] + ' ')
+            self.print_exp(kid0, out)
+            out.write(', ')
+            self.print_exp(kid1, out)
+        elif op == 'and':
+            kids = v['children']
+            kid0, kid1 = kids
+            self.print_exp(kid0, out)
+            out.write(' & ')
+            self.print_exp(kid1, out)
+        elif op == 'ite':
+            kids = v['children']
+            cond, then_br, else_br = kids
+            out.write('ite(')
+            self.print_exp(cond, out)
+            out.write(', ')
+            self.print_exp(then_br, out)
+            out.write(', ')
+            self.print_exp(else_br, out)
+            out.write(')')
 
         else:
             out.write(str(v))
