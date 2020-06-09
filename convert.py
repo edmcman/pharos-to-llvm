@@ -135,7 +135,7 @@ def add_func (func, module):
     assert addr not in functions
     void = ir.VoidType()
     fnty = ir.FunctionType(void, [])
-    func = ir.Function(module, fnty, name=str("0x%x" % addr))
+    func = ir.Function(module, fnty, name=body['name'])
     func.linkage = 'internal'
     entry = func.append_basic_block (name='entry')
     functions[addr] = func
