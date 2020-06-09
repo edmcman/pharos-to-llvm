@@ -15,6 +15,10 @@ functions = {}
 function_mem_reg = {}
 import_functions = {}
 
+stack_regs = ("rsp_0", "esp_0")
+
+bit_width = 32
+
 STACK_SIZE = 10 * 1024 * 1024
 
 module = ir.Module(name="test")
@@ -24,8 +28,8 @@ module.data_layout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
 bytetype = ir.IntType (8)
 pointertype = bytetype.as_pointer ()
 # integer type that is wide enough to store a pointer
-pointerint = ir.IntType(64)
-importfunctype = ir.FunctionType (ir.IntType (64), [])
+pointerint = ir.IntType(bit_width)
+importfunctype = ir.FunctionType (ir.IntType (bit_width), [])
 voidfunctype = ir.FunctionType (ir.VoidType (), [])
 abort = ir.Function (module, voidfunctype, "abort")
 abort.attributes.add('noreturn')
@@ -35,7 +39,7 @@ def get_extract_func(high, low, bigwidth):
     t = (smallwidth, bigwidth)
 
     if t not in get_extract_func.funcs:
-        typ = ir.FunctionType (ir.IntType (smallwidth), [ir.IntType (64), ir.IntType (64), ir.IntType (bigwidth)])
+        typ = ir.FunctionType (ir.IntType (smallwidth), [ir.IntType (bit_width), ir.IntType (bit_width), ir.IntType (bigwidth)])
         func = ir.Function (module, typ, "smt.extract.i%d.i%d" % (bigwidth, smallwidth))
         func.attributes.add("readnone")
         func.attributes.add("norecurse")
@@ -86,7 +90,7 @@ def convert_file (file, module):
     # It is safe to not pass an irb because rax will always be a
     # global variable which won't use the builder
     rax, _ = convert_var (next(file['regs'] [reg] for reg in ['rax_0', 'eax_0'] if reg in file['regs']))
-    rsp, _ = convert_var (next(file['regs'] [reg] for reg in ['rsp_0', 'esp_0'] if reg in file['regs']))
+    rsp, _ = convert_var (next(file['regs'] [reg] for reg in stack_regs if reg in file['regs']))
 
     for func in file['functions'].items ():
         add_func (func, module)
@@ -104,7 +108,7 @@ def convert_file (file, module):
     #irb.call (init, [])
 
     for var, key in file['regs'].items ():
-        if var == "rsp_0":
+        if var in stack_regs:
             continue
         llvmvar, _ = convert_var (key)
         irb.store (ir.Constant (llvmvar.type.pointee, 0), llvmvar)
@@ -203,12 +207,12 @@ def convert_stmts(stmts, rax, irb=ir.IRBuilder (), funcaddr=None):
 
 # Should we convert the following regwritestmt as a write to a pointer or a write to a bitvector?
 def should_convert_regwrite_as_pointer (stmt):
-    if stmt ['var'] ['varname'] == "rsp_0":
+    if stmt ['var'] ['varname'] in stack_regs:
         return True
 
     if stmt ['var'] ['varname'] == "":
         # Are we saving a snapshot of rsp?
-        if stmt ['exp'] ['op'] == "variable" and stmt ['exp'] ['varname'] == "rsp_0":
+        if stmt ['exp'] ['op'] == "variable" and stmt ['exp'] ['varname'] in stack_regs:
             return True
 
     return False
@@ -271,7 +275,7 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
         return M, lambda irb: irb.load (M)
 
     if exp['varid'] not in vars:
-        if exp['varname'] == 'rsp_0':
+        if exp['varname'] in stack_regs:
             typ = pointertype
         else:
             typ = ir.IntType (int(exp['width']))
@@ -293,7 +297,7 @@ def convert_var (exp, irb=ir.IRBuilder (), value=None):
             var.initializer = ir.Constant(typ, None)
             var.linkage = 'internal'
             vars[exp['varid']] = var
-            if exp['varname'] == 'rsp_0':
+            if exp['varname'] in stack_regs:
                 # Most of the time we don't want to access rsp as a pointer
                 exps[exp['varid']] = lambda irb: irb.ptrtoint (irb.load (vars[exp['varid']]), ir.IntType (int (exp['width'])))
             else:
@@ -310,7 +314,7 @@ def convert_exp_ptr (exp, irb=ir.IRBuilder (), funcaddr=None):
         ptr = convert_exp_ptr (exp ['children'] [0], irb, funcaddr)
         offset = convert_exp_bv (exp ['children'] [1], irb, funcaddr)
         return irb.gep (ptr, [offset])
-    elif exp['op'] == "variable" and exp['varname'] == "rsp_0":
+    elif exp['op'] == "variable" and exp['varname'] in stack_regs:
         v, _ = convert_var (exp, irb)
         return irb.load (v)
     else:
@@ -369,8 +373,8 @@ def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
 
             if arie:
                 f = get_extract_func (high, low, newexp.type.width) #exp['children'][2]['width'])
-                lowc = ir.Constant (ir.IntType (64), low)
-                highc = ir.Constant (ir.IntType (64), high)
+                lowc = ir.Constant (ir.IntType (bit_width), low)
+                highc = ir.Constant (ir.IntType (bit_width), high)
                 return irb.call (f, [lowc, highc, newexp])
             else:
                 shift_exp = irb.lshr (newexp, ir.Constant (newexp.type, low))
