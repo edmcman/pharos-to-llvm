@@ -85,8 +85,8 @@ def convert_file (file, module):
 
     # It is safe to not pass an irb because rax will always be a
     # global variable which won't use the builder
-    rax, _ = convert_var (file['regs'] ['rax_0'])
-    rsp, _ = convert_var (file['regs'] ['rsp_0'])
+    rax, _ = convert_var (next(file['regs'] [reg] for reg in ['rax_0', 'eax_0'] if reg in file['regs']))
+    rsp, _ = convert_var (next(file['regs'] [reg] for reg in ['rsp_0', 'esp_0'] if reg in file['regs']))
 
     for func in file['functions'].items ():
         add_func (func, module)
