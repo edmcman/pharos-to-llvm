@@ -15,15 +15,15 @@ functions = {}
 function_mem_reg = {}
 import_functions = {}
 
-stack_regs = ("rsp_0", "esp_0")
+stack_regs = ("rsp_0", "esp_0", "ebp_0")
 
 bit_width = 32
 
 STACK_SIZE = 10 * 1024 * 1024
 
 module = ir.Module(name="test")
-module.triple = "x86_64-apple-macosx10.14.0"
-module.data_layout = "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
+module.triple =  "i386-pc-linux-gnu"
+module.data_layout =  "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-f64:32:64-f80:32-n8:16:32-S128"
 
 bytetype = ir.IntType (8)
 pointertype = bytetype.as_pointer ()
