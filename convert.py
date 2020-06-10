@@ -243,6 +243,9 @@ def convert_stmt(stmt, rax, irb=ir.IRBuilder (), funcaddr=None):
             ptr = addr
             # Recast pointer if needed
             if ptr.type != val.type.as_pointer ():
+                if isinstance(val, ir.CastInstr) and val.operands[0].type.is_pointer:
+                    # strip ptrtoint cast
+                    val = val.operands[0]
                 ptr = irb.bitcast (ptr, val.type.as_pointer ())
         else:
             assert False
@@ -319,7 +322,17 @@ def convert_exp_ptr (exp, irb=ir.IRBuilder (), funcaddr=None):
         return irb.load (v)
     else:
         bvexp = convert_exp_bv (exp, irb, funcaddr)
-        return irb.inttoptr (bvexp, pointertype)
+        if isinstance(bvexp, ir.LoadInstr):
+            # replace
+            #  %1 = load i32, i32* %0
+            #  %2 = inttoptr i32 %1 to i8* 
+            # with
+            #  %1 = load i8*, (bitcast i32* %0 to i8**)
+            ptr = bvexp.operands[0]
+            ptr = irb.bitcast(ptr, pointertype.as_pointer())
+            return irb.load(ptr)
+        else:
+            return irb.inttoptr (bvexp, pointertype)
 
 def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
     if cache is None:
