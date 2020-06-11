@@ -15,15 +15,47 @@ functions = {}
 function_mem_reg = {}
 import_functions = {}
 
-stack_regs = ("rsp_0", "esp_0", "ebp_0")
 
 bit_width = 32
+# possible start of stack address space
+stack_base = int('0xBFFF0000', 16)
+text_base = int('0x8048000', 16)
+# reserve 5MB of space. Chosen arbitrary
+brk_base = text_base + 5*1024*1024
+stack_regs = ("rsp_0", "esp_0", "ebp_0")
+
+def is_global_addr(addr):
+    return text_base < addr and addr <= brk_base
+
 
 STACK_SIZE = 10 * 1024 * 1024
 
 module = ir.Module(name="test")
 module.triple =  "i386-pc-linux-gnu"
 module.data_layout =  "e-m:e-p:32:32-p270:32:32-p271:32:32-p272:64:64-f64:32:64-f80:32-n8:16:32-S128"
+
+
+globals = dict() 
+
+def mk_global_var(addr, ty):
+    """ Create a global variable for a global address"""
+    assert is_global_addr(addr)
+
+    if addr in globals:
+        return globals[addr]
+
+
+    ## hack: promote to at least 32bits since given type might not be inferred
+    ## correctly
+    if (isinstance(ty, ir.IntType) and ty.width < 32):
+        ty = ir.IntType(32)
+
+    gv = ir.GlobalVariable(module, ty, f'g_{hex(addr)[2:]}')
+    gv.initializer = ir.Constant(ty, None)
+    gv.linkage = 'internal'
+    globals[addr] = gv
+    return gv
+
 
 bytetype = ir.IntType (8)
 pointertype = bytetype.as_pointer ()
@@ -332,6 +364,13 @@ def convert_exp_ptr (exp, irb=ir.IRBuilder (), funcaddr=None):
             ptr = irb.bitcast(ptr, pointertype.as_pointer())
             return irb.load(ptr)
         else:
+            if (isinstance(bvexp, ir.Constant)):
+                if bvexp.constant == stack_base:
+                    # TODO: map to our symbolic stack base
+                    pass
+                elif is_global_addr(bvexp.constant):
+                    return mk_global_var(bvexp.constant, pointertype.pointee)
+
             return irb.inttoptr (bvexp, pointertype)
 
 def convert_exp_bv (exp, irb=ir.IRBuilder (), funcaddr=None, cache=None):
